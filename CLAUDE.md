@@ -83,7 +83,7 @@ python tiny-jira-cli.py comments ABC-123 --width 120
 
 This is a single-file CLI application (tiny-jira-cli.py) with a simple structure:
 
-- **Configuration Management**: `get_config()` loads credentials from .config.yml or environment variables, with support for `file:` prefix for token files. Returns a JIRA client instance from the `jira` library.
+- **Configuration Management**: `get_config()` loads credentials and an optional default project from .config.yml or environment variables, with support for `file:` prefix for token files. Returns a JIRA client instance from the `jira` library.
 - **Display Utilities**: `wrap()` and `print_issue()` handle text formatting and issue display. These work with both JIRA Issue objects and dict responses for backward compatibility.
 - **Command Handlers**: Each subcommand has a dedicated `cmd_*()` function:
   - `cmd_issue()` - Shows single issue OR lists issues (with optional project filter)

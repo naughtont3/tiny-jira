@@ -20,14 +20,15 @@ The CLI needs three values: Jira base URL, user email, and an API token. Preferr
 endpoint: "https://your-domain.atlassian.net"
 user: "you@example.com"
 token: "file:/path/to/token"  # or the token string directly
+# Optional default project so you can skip `-p`
+project: "INFRA"
 ```
 
 - The `token` key accepts `file:/path/to/token` to read from a file.
-- Environment variable fallback: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
+- Environment variable fallback: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, and optional `JIRA_DEFAULT_PROJECT`.
 - Show what the CLI sees with `python tiny-jira-cli.py --dump`.
 
 **Configuration search order:**
 1. `.config.yml` in the working directory
 2. `~/.tiny_jira/config.yml`
 3. Environment variables (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`)
-
