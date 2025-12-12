@@ -28,13 +28,19 @@ def print_block(content, **panel_kwargs):
 
 def get_config():
     """Load config and return a JIRA client instance."""
-    # Try to read from .config.yml first
-    config_file = ".config.yml"
+    # Try to read from .config.yml first, then ~/.tiny_jira/config.yml
+    config_paths = [
+        ".config.yml",
+        os.path.join(os.path.expanduser("~"), ".tiny_jira", "config.yml"),
+    ]
     base_url = None
     email = None
     api_token = None
 
-    if os.path.exists(config_file):
+    for config_file in config_paths:
+        if not os.path.exists(config_file):
+            continue
+
         with open(config_file, "r") as f:
             config = yaml.safe_load(f)
 
@@ -54,6 +60,10 @@ def get_config():
         else:
             api_token = token_value
 
+        # Stop after first config file found in priority order
+        if base_url or email or api_token:
+            break
+
     # Fall back to environment variables if not set from config
     if not base_url:
         base_url = os.environ.get("JIRA_BASE_URL")
@@ -70,8 +80,8 @@ def get_config():
 
     if missing:
         console.print(f"[red]Error: missing configuration: {', '.join(missing)}[/red]", file=sys.stderr)
-        console.print("[yellow]Please provide them via .config.yml or environment variables:[/yellow]", file=sys.stderr)
-        console.print('  [cyan].config.yml format:[/cyan]', file=sys.stderr)
+        console.print("[yellow]Please provide them via .config.yml, ~/.tiny_jira/config.yml, or environment variables:[/yellow]", file=sys.stderr)
+        console.print('  [cyan].config.yml / ~/.tiny_jira/config.yml format:[/cyan]', file=sys.stderr)
         console.print('    endpoint: "https://your-domain.atlassian.net"', file=sys.stderr)
         console.print('    user: "you@example.com"', file=sys.stderr)
         console.print('    token: "your_api_token"', file=sys.stderr)
