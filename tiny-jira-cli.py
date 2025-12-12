@@ -27,7 +27,7 @@ def print_block(content, **panel_kwargs):
 
 
 def get_config():
-    """Load config and return a JIRA client instance."""
+    """Load config and return a JIRA client instance plus resolved defaults."""
     # Try to read from .config.yml first, then ~/.tiny_jira/config.yml
     config_paths = [
         ".config.yml",
@@ -36,6 +36,7 @@ def get_config():
     base_url = None
     email = None
     api_token = None
+    default_project = None
 
     for config_file in config_paths:
         if not os.path.exists(config_file):
@@ -47,6 +48,10 @@ def get_config():
         base_url = config.get("endpoint")
         email = config.get("user")
         token_value = config.get("token")
+        project_value = config.get("project")
+
+        if project_value:
+            default_project = project_value
 
         # Handle file: prefix for token
         if token_value and token_value.startswith("file:"):
@@ -71,6 +76,8 @@ def get_config():
         email = os.environ.get("JIRA_EMAIL")
     if not api_token:
         api_token = os.environ.get("JIRA_API_TOKEN")
+    if not default_project:
+        default_project = os.environ.get("JIRA_DEFAULT_PROJECT")
 
     missing = [name for name, val in [
         ("JIRA_BASE_URL/endpoint", base_url),
@@ -94,7 +101,7 @@ def get_config():
     # Return JIRA client instance
     try:
         jira = JIRA(server=base_url.rstrip("/"), basic_auth=(email, api_token))
-        return jira, base_url, email, api_token
+        return jira, base_url, email, api_token, default_project
     except JIRAError as e:
         console.print(f"[red]Error connecting to Jira: {e}[/red]", file=sys.stderr)
         sys.exit(1)
@@ -106,6 +113,78 @@ def wrap(text, width=80, indent=""):
         return ""
     wrapper = textwrap.TextWrapper(width=width, subsequent_indent=indent)
     return wrapper.fill(text)
+
+
+def show_examples(prog_name):
+    """Display usage examples and exit."""
+    examples = textwrap.dedent(f"""
+        Examples:
+          # Show configuration
+          {prog_name} --dump
+
+          # View a single issue
+          {prog_name} issue ABC-123
+
+          # List all issues from a project
+          {prog_name} issue -p INFRA -n 10
+
+          # List issues with descriptions
+          {prog_name} issue -p INFRA --describe
+
+          # Search with JQL
+          {prog_name} search "project = INFRA AND status = 'In Progress'"
+
+          # Show comments on an issue
+          {prog_name} comments ABC-123
+
+        Issue command:
+          # Show a specific issue with description
+          {prog_name} issue ABC-123
+
+          # Show issue without description
+          {prog_name} issue ABC-123 --no-description
+
+          # List all issues from INFRA project
+          {prog_name} issue -p INFRA
+
+          # List 5 most recent issues from a project
+          {prog_name} issue -p INFRA -n 5
+
+          # List issues with descriptions
+          {prog_name} issue -p INFRA --describe
+
+          # List your issues (assigned to or reported by you)
+          {prog_name} issue
+
+        Search command:
+          # Search for issues assigned to you
+          {prog_name} search "assignee = currentUser()"
+
+          # Search by project and status
+          {prog_name} search "project = INFRA AND status = 'In Progress'"
+
+          # Search with custom result limit
+          {prog_name} search "project = INFRA" -n 50
+
+          # Search and show descriptions
+          {prog_name} search "project = INFRA AND assignee = currentUser()" --describe
+
+          # Complex JQL query
+          {prog_name} search "project = INFRA AND status IN ('To Do', 'In Progress') ORDER BY priority DESC"
+
+        Comments command:
+          # Show all comments on an issue
+          {prog_name} comments ABC-123
+
+          # Show comments with custom text width
+          {prog_name} comments ABC-123 --width 120
+    """).strip()
+    print_block(
+        examples,
+        title="[bold yellow]Examples[/bold yellow]",
+        border_style="green",
+        padding=(1, 2)
+    )
 
 
 def get_column_registry():
@@ -498,14 +577,15 @@ def print_issue(issue, show_description=True, width=100, format="detailed"):
 
 def cmd_issue(args):
     """Display a single issue or list all issues."""
-    jira, _, _, _ = get_config()
+    jira, _, _, _, default_project = get_config()
 
     # If no key provided, list all issues
     if not args.key:
         try:
             # Build JQL query based on project filter
-            if args.project:
-                jql = f"project = {args.project} ORDER BY updated DESC"
+            project = args.project or default_project
+            if project:
+                jql = f"project = {project} ORDER BY updated DESC"
             else:
                 # Default: issues assigned to or reported by current user
                 jql = "assignee = currentUser() OR reporter = currentUser() ORDER BY updated DESC"
@@ -565,7 +645,7 @@ def cmd_issue(args):
 
 def cmd_search(args):
     """Search for issues using JQL."""
-    jira, _, _, _ = get_config()
+    jira, _, _, _, _ = get_config()
 
     try:
         issues = jira.search_issues(args.jql, maxResults=args.max_results)
@@ -597,7 +677,7 @@ def cmd_search(args):
 
 def cmd_comments(args):
     """Display comments for an issue."""
-    jira, _, _, _ = get_config()
+    jira, _, _, _, _ = get_config()
 
     try:
         issue = jira.issue(args.key)
@@ -616,26 +696,6 @@ def cmd_comments(args):
 def main():
     parser = argparse.ArgumentParser(
         description="Minimal Jira CLI using Jira Cloud REST API",
-        epilog="""
-Examples:
-  # Show configuration
-  %(prog)s --dump
-
-  # View a single issue
-  %(prog)s issue ABC-123
-
-  # List all issues from a project
-  %(prog)s issue -p INFRA -n 10
-
-  # List issues with descriptions
-  %(prog)s issue -p INFRA --describe
-
-  # Search with JQL
-  %(prog)s search "project = INFRA AND status = 'In Progress'"
-
-  # Show comments on an issue
-  %(prog)s comments ABC-123
-        """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -648,32 +708,17 @@ Examples:
         action="store_true",
         help="Disable color/styling for grep-friendly output",
     )
+    parser.add_argument(
+        "--examples",
+        action="store_true",
+        help="Show usage examples and exit",
+    )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
     # jira_cli.py issue [KEY]
     p_issue = subparsers.add_parser(
         "issue",
         help="Show a single issue or list all issues",
-        epilog="""
-Examples:
-  # Show a specific issue with description
-  %(prog)s ABC-123
-
-  # Show issue without description
-  %(prog)s ABC-123 --no-description
-
-  # List all issues from INFRA project
-  %(prog)s -p INFRA
-
-  # List 5 most recent issues from a project
-  %(prog)s -p INFRA -n 5
-
-  # List issues with descriptions
-  %(prog)s -p INFRA --describe
-
-  # List your issues (assigned to or reported by you)
-  %(prog)s
-        """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p_issue.add_argument("key", nargs="?", help="Issue key, e.g. ABC-123 (if omitted, lists all issues)")
@@ -728,23 +773,6 @@ Examples:
     p_search = subparsers.add_parser(
         "search",
         help="Search issues with JQL",
-        epilog="""
-Examples:
-  # Search for issues assigned to you
-  %(prog)s "assignee = currentUser()"
-
-  # Search by project and status
-  %(prog)s "project = INFRA AND status = 'In Progress'"
-
-  # Search with custom result limit
-  %(prog)s "project = INFRA" -n 50
-
-  # Search and show descriptions
-  %(prog)s "project = INFRA AND assignee = currentUser()" --describe
-
-  # Complex JQL query
-  %(prog)s "project = INFRA AND status IN ('To Do', 'In Progress') ORDER BY priority DESC"
-        """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p_search.add_argument("jql", help='JQL query, e.g. \'project = ABC AND assignee = currentUser()\'')
@@ -778,14 +806,6 @@ Examples:
     p_comments = subparsers.add_parser(
         "comments",
         help="Show comments for an issue",
-        epilog="""
-Examples:
-  # Show all comments on an issue
-  %(prog)s ABC-123
-
-  # Show comments with custom text width
-  %(prog)s ABC-123 --width 120
-        """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p_comments.add_argument("key", help="Issue key, e.g. ABC-123")
@@ -810,12 +830,21 @@ Examples:
         TABLE_BOX = box.ROUNDED
         ASCII_MODE = False
 
+    if args.examples:
+        show_examples(parser.prog)
+        sys.exit(0)
+
     if args.dump:
-        _, base_url, email, api_token = get_config()
-        print_block(
-            f"[bold cyan]Endpoint:[/bold cyan] {base_url}\n"
-            f"[bold cyan]User:[/bold cyan]     {email}\n"
+        _, base_url, email, api_token, default_project = get_config()
+        config_lines = [
+            f"[bold cyan]Endpoint:[/bold cyan] {base_url}",
+            f"[bold cyan]User:[/bold cyan]     {email}",
             f"[bold cyan]Token:[/bold cyan]    {'*' * 8 if api_token else '[dim](not set)[/dim]'}",
+        ]
+        if default_project:
+            config_lines.append(f"[bold cyan]Project:[/bold cyan]  {default_project}")
+        print_block(
+            "\n".join(config_lines),
             title="[bold yellow]Jira Configuration[/bold yellow]",
             border_style="green",
             padding=(1, 2)
