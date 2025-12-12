@@ -14,6 +14,16 @@ from rich.text import Text
 from rich import box
 
 console = Console()
+TABLE_BOX = box.ROUNDED
+ASCII_MODE = False
+
+
+def print_block(content, **panel_kwargs):
+    """Print a block of text; fall back to plain text when in ASCII mode."""
+    if ASCII_MODE:
+        console.print(content)
+    else:
+        console.print(Panel(content, **panel_kwargs))
 
 
 def get_config():
@@ -271,7 +281,7 @@ def create_issues_table(columns=None):
     widths = calculate_column_widths(columns, console.width)
 
     # Create table
-    table = Table(box=box.ROUNDED, show_header=True, header_style="bold cyan")
+    table = Table(box=TABLE_BOX, show_header=True, header_style="bold cyan")
 
     # Add columns with calculated widths
     for col_name in columns:
@@ -379,6 +389,32 @@ def add_issue_to_table(table, issue, columns):
     table.add_row(*row_values)
 
 
+def render_comments(issue_key, comments, width):
+    """Render comments for an issue using Rich panels."""
+    if not comments:
+        console.print(f"[yellow]No comments on {issue_key}.[/yellow]")
+        return
+
+    console.print(f"\n[bold cyan]Comments for {issue_key}:[/bold cyan]\n")
+    for c in comments:
+        if ASCII_MODE:
+            console.print("-" * 27)
+        author = c.author.displayName if hasattr(c.author, 'displayName') else str(c.author)
+        body = c.body or ""
+
+        content = []
+        content.append(f"[bold blue]Author:[/bold blue] {author}")
+        content.append("")
+
+        for line in str(body).splitlines():
+            wrapped = wrap(line, width=width - 4, indent="")
+            content.append(wrapped)
+
+        print_block("\n".join(content), border_style="dim blue", padding=(1, 2))
+        if ASCII_MODE:
+            console.print()
+
+
 def print_issue(issue, show_description=True, width=100, format="detailed"):
     """Print issue details. Works with both JIRA Issue objects and dicts.
 
@@ -446,7 +482,7 @@ def print_issue(issue, show_description=True, width=100, format="detailed"):
             content.append("  [dim](no description)[/dim]")
 
     # Print as a panel
-    console.print(Panel("\n".join(content), border_style="blue", padding=(1, 2)))
+    print_block("\n".join(content), border_style="blue", padding=(1, 2))
     console.print()
 
 
@@ -501,6 +537,14 @@ def cmd_issue(args):
         try:
             issue = jira.issue(args.key)
             print_issue(issue, show_description=not args.no_description, width=args.width, format="detailed")
+
+            if args.show_comments:
+                try:
+                    comments = jira.comments(issue)
+                    render_comments(args.key, comments, args.width)
+                except JIRAError as e:
+                    console.print(f"[red]Error fetching comments for {args.key}: {e}[/red]", file=sys.stderr)
+                    sys.exit(1)
         except JIRAError as e:
             if e.status_code == 404:
                 console.print(f"[red]Issue {args.key} not found.[/red]", file=sys.stderr)
@@ -549,24 +593,7 @@ def cmd_comments(args):
         issue = jira.issue(args.key)
         comments = jira.comments(issue)
 
-        if not comments:
-            console.print(f"[yellow]No comments on {args.key}.[/yellow]")
-            return
-
-        console.print(f"\n[bold cyan]Comments for {args.key}:[/bold cyan]\n")
-        for i, c in enumerate(comments, 1):
-            author = c.author.displayName if hasattr(c.author, 'displayName') else str(c.author)
-            body = c.body or ""
-
-            content = []
-            content.append(f"[bold blue]Author:[/bold blue] {author}")
-            content.append("")
-
-            for line in str(body).splitlines():
-                wrapped = wrap(line, width=args.width - 4, indent="")
-                content.append(wrapped)
-
-            console.print(Panel("\n".join(content), border_style="dim blue", padding=(1, 2)))
+        render_comments(args.key, comments, args.width)
 
     except JIRAError as e:
         if e.status_code == 404:
@@ -606,6 +633,11 @@ Examples:
         action="store_true",
         help="Dump configuration and exit",
     )
+    parser.add_argument(
+        "--ascii",
+        action="store_true",
+        help="Disable color/styling for grep-friendly output",
+    )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
     # jira_cli.py issue [KEY]
@@ -639,6 +671,11 @@ Examples:
         "--no-description",
         action="store_true",
         help="Do not show issue description (for single issue)",
+    )
+    p_issue.add_argument(
+        "--show-comments",
+        action="store_true",
+        help="Include comments when showing a specific issue",
     )
     p_issue.add_argument(
         "-p", "--project",
@@ -752,16 +789,27 @@ Examples:
 
     args = parser.parse_args()
 
+    # Configure console based on ASCII preference
+    global console, TABLE_BOX, ASCII_MODE
+    if args.ascii:
+        console = Console(color_system=None, force_terminal=False, no_color=True, highlight=False)
+        TABLE_BOX = box.ASCII
+        ASCII_MODE = True
+    else:
+        console = Console()
+        TABLE_BOX = box.ROUNDED
+        ASCII_MODE = False
+
     if args.dump:
         _, base_url, email, api_token = get_config()
-        console.print(Panel(
+        print_block(
             f"[bold cyan]Endpoint:[/bold cyan] {base_url}\n"
             f"[bold cyan]User:[/bold cyan]     {email}\n"
             f"[bold cyan]Token:[/bold cyan]    {'*' * 8 if api_token else '[dim](not set)[/dim]'}",
             title="[bold yellow]Jira Configuration[/bold yellow]",
             border_style="green",
             padding=(1, 2)
-        ))
+        )
         sys.exit(0)
 
     if not args.command:
