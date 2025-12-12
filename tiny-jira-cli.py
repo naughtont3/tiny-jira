@@ -88,17 +88,201 @@ def wrap(text, width=80, indent=""):
     return wrapper.fill(text)
 
 
-def create_issues_table():
-    """Create a Rich table for displaying issues."""
+def get_column_registry():
+    """Return a dictionary mapping column names to their configuration.
+
+    Each column config includes:
+    - header: Display name for column header
+    - style: Rich style for the column
+    - min_width: Minimum width for the column
+    - ideal_width: Ideal width (None means flexible/summary field)
+    - field_extractor: Function to extract value from issue
+    """
+    return {
+        'key': {
+            'header': 'Key',
+            'style': 'bold yellow',
+            'min_width': 10,
+            'ideal_width': 12,
+            'field_extractor': lambda issue: (
+                issue.key if hasattr(issue, 'key') else issue.get('key', '')
+            )
+        },
+        'summary': {
+            'header': 'Summary',
+            'style': 'default',
+            'min_width': 30,
+            'ideal_width': None,  # Flexible - gets remaining space
+            'field_extractor': lambda issue: (
+                (issue.fields.summary or "") if hasattr(issue, 'key')
+                else issue.get('fields', {}).get('summary', '')
+            )
+        },
+        'status': {
+            'header': 'Status',
+            'style': 'green',
+            'min_width': 10,
+            'ideal_width': 12,
+            'field_extractor': lambda issue: (
+                (issue.fields.status.name if issue.fields.status else "") if hasattr(issue, 'key')
+                else issue.get('fields', {}).get('status', {}).get('name', '')
+            )
+        },
+        'labels': {
+            'header': 'Labels',
+            'style': 'magenta',
+            'min_width': 10,
+            'ideal_width': 15,
+            'field_extractor': lambda issue: (
+                ", ".join(issue.fields.labels) if hasattr(issue, 'key') and issue.fields.labels
+                else "-" if hasattr(issue, 'key')
+                else (", ".join(issue.get('fields', {}).get('labels', [])) if issue.get('fields', {}).get('labels', []) else "-")
+            )
+        },
+        'assignee': {
+            'header': 'Assignee',
+            'style': 'blue',
+            'min_width': 12,
+            'ideal_width': 18,
+            'field_extractor': lambda issue: (
+                (issue.fields.assignee.displayName if issue.fields.assignee else "-") if hasattr(issue, 'key')
+                else ((issue.get('fields', {}).get('assignee') or {}).get('displayName', '-'))
+            )
+        },
+        'created': {
+            'header': 'Created',
+            'style': 'dim',
+            'min_width': 10,
+            'ideal_width': 10,
+            'field_extractor': lambda issue: (
+                (issue.fields.created[:10] if issue.fields.created else "") if hasattr(issue, 'key')
+                else (issue.get('fields', {}).get('created', '') or "")[:10]
+            )
+        },
+        'updated': {
+            'header': 'Updated',
+            'style': 'dim',
+            'min_width': 10,
+            'ideal_width': 10,
+            'field_extractor': lambda issue: (
+                (issue.fields.updated[:10] if issue.fields.updated else "") if hasattr(issue, 'key')
+                else (issue.get('fields', {}).get('updated', '') or "")[:10]
+            )
+        },
+    }
+
+
+def calculate_column_widths(columns, terminal_width):
+    """Calculate optimal widths for each column based on terminal width.
+
+    Priority-based approach:
+    1. Start with minimum widths for all columns
+    2. Expand fields to ideal widths (prioritize non-summary fields)
+    3. Give remaining space to summary
+
+    Args:
+        columns: List of column names
+        terminal_width: Available terminal width
+
+    Returns:
+        Dict mapping column names to calculated widths
+    """
+    registry = get_column_registry()
+
+    # Reserve space for table borders and padding
+    # Each column needs ~3 chars (padding + border), plus 2 for table edges
+    border_overhead = len(columns) * 3 + 2
+    available_width = max(terminal_width - border_overhead, 40)  # Minimum 40 chars
+
+    widths = {}
+
+    # Phase 1: Allocate minimum widths
+    for col in columns:
+        widths[col] = registry[col]['min_width']
+        available_width -= registry[col]['min_width']
+
+    # Phase 2: Expand non-summary fields to their ideal widths
+    for col in columns:
+        ideal = registry[col]['ideal_width']
+        if ideal is not None and ideal > widths[col]:  # Has ideal width and not yet at ideal
+            extra_needed = ideal - widths[col]
+            if available_width >= extra_needed:
+                widths[col] = ideal
+                available_width -= extra_needed
+            else:
+                # Give what we can
+                widths[col] += available_width
+                available_width = 0
+                break
+
+    # Phase 3: Give remaining space to summary (if it's in the columns)
+    if 'summary' in columns and available_width > 0:
+        widths['summary'] += available_width
+
+    return widths
+
+
+def parse_columns_arg(columns_arg):
+    """Parse the --columns argument into a list of column names.
+
+    Args:
+        columns_arg: Comma-separated string of column names
+
+    Returns:
+        List of column names, or None if no argument provided
+
+    Raises:
+        ValueError: If invalid column names provided
+    """
+    if not columns_arg:
+        return None
+
+    columns = [c.strip().lower() for c in columns_arg.split(',')]
+
+    # Validate
+    registry = get_column_registry()
+    invalid = [c for c in columns if c not in registry]
+    if invalid:
+        available = ', '.join(sorted(registry.keys()))
+        raise ValueError(
+            f"Invalid column(s): {', '.join(invalid)}\n"
+            f"Available columns: {available}"
+        )
+
+    return columns
+
+
+def create_issues_table(columns=None):
+    """Create a Rich table for displaying issues with customizable columns.
+
+    Args:
+        columns: List of column names to display. If None, uses default columns.
+
+    Returns:
+        Tuple of (Table object, list of column names)
+    """
+    # Default to current 7 columns for backward compatibility
+    if columns is None:
+        columns = ['key', 'summary', 'status', 'labels', 'assignee', 'created', 'updated']
+
+    registry = get_column_registry()
+
+    # Calculate dynamic widths based on terminal width
+    widths = calculate_column_widths(columns, console.width)
+
+    # Create table
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold cyan")
-    table.add_column("Key", style="bold yellow", width=16)
-    table.add_column("Summary", style="default", width=40)
-    table.add_column("Status", style="green", width=15)
-    table.add_column("Labels", style="magenta", width=20)
-    table.add_column("Assignee", style="blue", width=20)
-    table.add_column("Created", style="dim", width=12)
-    table.add_column("Updated", style="dim", width=12)
-    return table
+
+    # Add columns with calculated widths
+    for col_name in columns:
+        config = registry[col_name]
+        table.add_column(
+            config['header'],
+            style=config['style'],
+            width=widths[col_name]
+        )
+
+    return table, columns
 
 
 def parse_filters(filter_string):
@@ -175,42 +359,24 @@ def filter_issues(issues, filters):
     return filtered
 
 
-def add_issue_to_table(table, issue):
-    """Add a single issue as a row to the Rich table."""
-    # Handle both JIRA Issue objects and dict responses
-    if hasattr(issue, 'key'):
-        # JIRA Issue object
-        key = issue.key
-        summary = issue.fields.summary or ""
-        status = issue.fields.status.name if issue.fields.status else ""
-        assignee = issue.fields.assignee.displayName if issue.fields.assignee else ""
-        labels = issue.fields.labels if issue.fields.labels else []
-        created = issue.fields.created[:10] if issue.fields.created else ""
-        updated = issue.fields.updated[:10] if issue.fields.updated else ""
-    else:
-        # Dict format (for backward compatibility)
-        key = issue.get("key", "")
-        fields = issue.get("fields", {})
-        summary = fields.get("summary", "")
-        status = fields.get("status", {}).get("name", "")
-        assignee = (fields.get("assignee") or {}).get("displayName", "")
-        labels = fields.get("labels", [])
-        created = (fields.get("created") or "")[:10]
-        updated = (fields.get("updated") or "")[:10]
+def add_issue_to_table(table, issue, columns):
+    """Add a single issue as a row to the Rich table.
 
-    # Format labels as comma-separated string
-    labels_str = ", ".join(labels) if labels else "-"
+    Args:
+        table: Rich Table object
+        issue: JIRA Issue object or dict
+        columns: List of column names (in display order)
+    """
+    registry = get_column_registry()
 
-    # Add row with values (Rich will handle truncation)
-    table.add_row(
-        key,
-        summary,
-        status,
-        labels_str,
-        assignee if assignee else "-",
-        created,
-        updated
-    )
+    # Extract values for each column using the registry extractors
+    row_values = []
+    for col_name in columns:
+        extractor = registry[col_name]['field_extractor']
+        value = extractor(issue)
+        row_values.append(value)
+
+    table.add_row(*row_values)
 
 
 def print_issue(issue, show_description=True, width=100, format="detailed"):
@@ -309,6 +475,13 @@ def cmd_issue(args):
                 console.print("[yellow]No issues found.[/yellow]")
                 return
 
+            # Parse columns argument
+            try:
+                columns = parse_columns_arg(getattr(args, 'columns', None))
+            except ValueError as e:
+                console.print(f"[red]Error: {e}[/red]", file=sys.stderr)
+                sys.exit(1)
+
             # Use table format when listing multiple issues without descriptions
             if args.describe:
                 # Use detailed format with descriptions
@@ -316,9 +489,9 @@ def cmd_issue(args):
                     print_issue(issue, show_description=True, width=args.width, format="detailed")
             else:
                 # Use compact table format
-                table = create_issues_table()
+                table, col_list = create_issues_table(columns)
                 for issue in issues:
-                    add_issue_to_table(table, issue)
+                    add_issue_to_table(table, issue, col_list)
                 console.print(table)
         except JIRAError as e:
             console.print(f"[red]Error fetching issues: {e}[/red]", file=sys.stderr)
@@ -347,14 +520,21 @@ def cmd_search(args):
             console.print("[yellow]No issues found.[/yellow]")
             return
 
+        # Parse columns argument
+        try:
+            columns = parse_columns_arg(getattr(args, 'columns', None))
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]", file=sys.stderr)
+            sys.exit(1)
+
         # Use table format when not showing descriptions
         if args.describe:
             for issue in issues:
                 print_issue(issue, show_description=True, width=args.width, format="detailed")
         else:
-            table = create_issues_table()
+            table, col_list = create_issues_table(columns)
             for issue in issues:
-                add_issue_to_table(table, issue)
+                add_issue_to_table(table, issue, col_list)
             console.print(table)
     except JIRAError as e:
         console.print(f"[red]Error searching issues: {e}[/red]", file=sys.stderr)
@@ -488,6 +668,13 @@ Examples:
              'Supported fields: key, summary, status, assignee, reporter, labels, issuetype. '
              'Example: --filter summary:"bug",status:"progress"'
     )
+    p_issue.add_argument(
+        "-c", "--columns",
+        type=str,
+        help="Comma-separated columns to display in table view. "
+             "Available: key, summary, status, labels, assignee, created, updated. "
+             "Default: key,summary,status,labels,assignee,created,updated"
+    )
     p_issue.set_defaults(func=cmd_issue)
 
     # jira_cli.py search "JQL"
@@ -530,6 +717,13 @@ Examples:
         type=int,
         default=100,
         help="Output width for wrapping text (default: 100)",
+    )
+    p_search.add_argument(
+        "-c", "--columns",
+        type=str,
+        help="Comma-separated columns to display in table view. "
+             "Available: key, summary, status, labels, assignee, created, updated. "
+             "Default: key,summary,status,labels,assignee,created,updated"
     )
     p_search.set_defaults(func=cmd_search)
 
