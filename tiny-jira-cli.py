@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import re
 import argparse
 import textwrap
 import yaml
@@ -90,14 +91,88 @@ def wrap(text, width=80, indent=""):
 def create_issues_table():
     """Create a Rich table for displaying issues."""
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold cyan")
-    table.add_column("Key", style="bold yellow", width=12)
-    table.add_column("Summary", style="white", width=40)
+    table.add_column("Key", style="bold yellow", width=16)
+    table.add_column("Summary", style="default", width=40)
     table.add_column("Status", style="green", width=15)
     table.add_column("Labels", style="magenta", width=20)
     table.add_column("Assignee", style="blue", width=20)
     table.add_column("Created", style="dim", width=12)
     table.add_column("Updated", style="dim", width=12)
     return table
+
+
+def parse_filters(filter_string):
+    """Parse filter string into list of (field, value) tuples.
+
+    Example: 'summary:"CSP ",assignee:"christ"'
+    Returns: [("summary", "CSP "), ("assignee", "christ")]
+    """
+    if not filter_string:
+        return []
+
+    # Pattern to match: fieldname:"value"
+    pattern = r'(\w+):"([^"]*)"'
+    matches = re.findall(pattern, filter_string)
+    return [(field.lower(), value) for field, value in matches]
+
+
+def filter_issues(issues, filters):
+    """Filter issues based on field filters (case-insensitive substring match).
+
+    Args:
+        issues: List of JIRA Issue objects
+        filters: List of (field, value) tuples from parse_filters()
+
+    Returns:
+        Filtered list of issues where ALL filters match
+    """
+    if not filters:
+        return issues
+
+    filtered = []
+    for issue in issues:
+        match_all = True
+        for field, value in filters:
+            value_lower = value.lower()
+
+            if field == "key":
+                if value_lower not in issue.key.lower():
+                    match_all = False
+                    break
+            elif field == "summary":
+                if value_lower not in issue.fields.summary.lower():
+                    match_all = False
+                    break
+            elif field == "status":
+                if value_lower not in issue.fields.status.name.lower():
+                    match_all = False
+                    break
+            elif field == "assignee":
+                assignee_name = issue.fields.assignee.displayName if issue.fields.assignee else ""
+                if value_lower not in assignee_name.lower():
+                    match_all = False
+                    break
+            elif field == "reporter":
+                reporter_name = issue.fields.reporter.displayName if issue.fields.reporter else ""
+                if value_lower not in reporter_name.lower():
+                    match_all = False
+                    break
+            elif field == "labels":
+                # Match if value is substring of any label
+                labels_str = " ".join(issue.fields.labels).lower()
+                if value_lower not in labels_str:
+                    match_all = False
+                    break
+            elif field == "issuetype":
+                if value_lower not in issue.fields.issuetype.name.lower():
+                    match_all = False
+                    break
+            # Unknown fields are ignored
+
+        if match_all:
+            filtered.append(issue)
+
+    return filtered
 
 
 def add_issue_to_table(table, issue):
@@ -224,6 +299,11 @@ def cmd_issue(args):
                 jql = "assignee = currentUser() OR reporter = currentUser() ORDER BY updated DESC"
 
             issues = jira.search_issues(jql, maxResults=args.max_results)
+
+            # Apply filters if specified
+            if args.filter:
+                filter_list = parse_filters(args.filter)
+                issues = filter_issues(issues, filter_list)
 
             if not issues:
                 console.print("[yellow]No issues found.[/yellow]")
@@ -401,6 +481,12 @@ Examples:
         type=int,
         default=100,
         help="Output width for wrapping text (default: 100)",
+    )
+    p_issue.add_argument(
+        "--filter",
+        help='Filter results by field values (format: field:"value",field:"value"). '
+             'Supported fields: key, summary, status, assignee, reporter, labels, issuetype. '
+             'Example: --filter summary:"bug",status:"progress"'
     )
     p_issue.set_defaults(func=cmd_issue)
 
