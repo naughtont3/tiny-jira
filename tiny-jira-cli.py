@@ -387,15 +387,25 @@ def create_issues_table(columns=None):
 def parse_filters(filter_string):
     """Parse filter string into list of (field, value) tuples.
 
-    Example: 'summary:"CSP ",assignee:"christ"'
-    Returns: [("summary", "CSP "), ("assignee", "christ")]
+    Supports both quoted and unquoted values:
+    - 'summary:"CSP ",assignee:"christ"' -> [("summary", "CSP "), ("assignee", "christ")]
+    - 'summary:Scheduling,status:Done' -> [("summary", "Scheduling"), ("status", "Done")]
     """
     if not filter_string:
         return []
 
-    # Pattern to match: fieldname:"value"
-    pattern = r'(\w+):"([^"]*)"'
-    matches = re.findall(pattern, filter_string)
+    # Pattern to match: fieldname:"value" OR fieldname:value
+    # Try quoted pattern first, then unquoted
+    pattern_quoted = r'(\w+):"([^"]*)"'
+    pattern_unquoted = r'(\w+):([^,]+)'
+
+    matches = re.findall(pattern_quoted, filter_string)
+    if not matches:
+        # No quoted matches, try unquoted pattern
+        matches = re.findall(pattern_unquoted, filter_string)
+        # Strip whitespace from unquoted values
+        matches = [(field, value.strip()) for field, value in matches]
+
     return [(field.lower(), value) for field, value in matches]
 
 
@@ -412,6 +422,9 @@ def filter_issues(issues, filters):
     if not filters:
         return issues
 
+    # Track which unknown fields we've warned about to avoid duplicate warnings
+    warned_fields = set()
+
     filtered = []
     for issue in issues:
         match_all = True
@@ -423,11 +436,13 @@ def filter_issues(issues, filters):
                     match_all = False
                     break
             elif field == "summary":
-                if value_lower not in issue.fields.summary.lower():
+                summary = issue.fields.summary or ""
+                if value_lower not in summary.lower():
                     match_all = False
                     break
             elif field == "status":
-                if value_lower not in issue.fields.status.name.lower():
+                status_name = issue.fields.status.name if issue.fields.status else ""
+                if value_lower not in status_name.lower():
                     match_all = False
                     break
             elif field == "assignee":
@@ -442,15 +457,37 @@ def filter_issues(issues, filters):
                     break
             elif field == "labels":
                 # Match if value is substring of any label
-                labels_str = " ".join(issue.fields.labels).lower()
+                labels = issue.fields.labels or []
+                labels_str = " ".join(labels).lower()
                 if value_lower not in labels_str:
                     match_all = False
                     break
             elif field == "issuetype":
-                if value_lower not in issue.fields.issuetype.name.lower():
+                issuetype_name = issue.fields.issuetype.name if issue.fields.issuetype else ""
+                if value_lower not in issuetype_name.lower():
                     match_all = False
                     break
-            # Unknown fields are ignored
+            elif field == "updated":
+                updated_date = (issue.fields.updated[:10] if issue.fields.updated else "")
+                if value_lower not in updated_date.lower():
+                    match_all = False
+                    break
+            elif field == "created":
+                created_date = (issue.fields.created[:10] if issue.fields.created else "")
+                if value_lower not in created_date.lower():
+                    match_all = False
+                    break
+            else:
+                # Unknown field - warn user (only once per field)
+                if field not in warned_fields:
+                    warned_fields.add(field)
+                    supported = "key, summary, status, assignee, reporter, labels, issuetype, created, updated"
+                    console.print(
+                        f"[yellow]Warning: Unknown filter field '{field}' ignored. "
+                        f"Supported fields: {supported}[/yellow]"
+                    )
+                # Continue checking other filters but skip this one
+                continue
 
         if match_all:
             filtered.append(issue)
@@ -757,8 +794,8 @@ def main():
     p_issue.add_argument(
         "--filter",
         help='Filter results by field values (format: field:"value",field:"value"). '
-             'Supported fields: key, summary, status, assignee, reporter, labels, issuetype. '
-             'Example: --filter summary:"bug",status:"progress"'
+             'Supported fields: key, summary, status, assignee, reporter, labels, issuetype, created, updated. '
+             'Example: --filter summary:"bug",status:"progress",updated:"2025-12"'
     )
     p_issue.add_argument(
         "-c", "--columns",
