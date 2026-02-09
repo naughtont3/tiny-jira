@@ -1,0 +1,8 @@
+#!/bin/bash
+# Wrapper script to add to PATH
+
+TJ_PY_SCRIPT=/Users/3t4/projects/python/tiny-jira/tiny-jira-cli.py
+TJ_VENV_DIR=/Users/3t4/projects/python/tiny-jira/venv
+
+. $TJ_VENV_DIR/bin/activate
+python3 $TJ_PY_SCRIPT "$@"
