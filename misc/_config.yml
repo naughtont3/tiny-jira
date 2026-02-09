@@ -2,3 +2,21 @@ endpoint: "https://my.atlassian.net"
 user: "myusername@hello.com"
 token: "file:/Users/sgrundy/tokens/bogus-testing"
 project: "Hello"
+
+# --- Multi-project format ---
+# Uncomment below (and remove the flat config above) to use multiple profiles.
+# Use -p LABEL to select a profile, e.g.: tiny-jira -p abc issue
+#
+# projects:
+#   infra:
+#     endpoint: "https://domain1.atlassian.net"
+#     user: "user@example.com"
+#     token: "file:/path/to/token1"
+#     project: "INFRA"
+#   abc:
+#     endpoint: "https://domain2.atlassian.net"
+#     user: "other@example.com"
+#     token: "token-string"
+#     project: "ABC"
+#
+# default: infra   # optional; falls back to first entry
