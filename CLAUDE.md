@@ -4,104 +4,88 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A minimal Python CLI for interacting with Jira Cloud using API tokens. The project uses the `jira` (pycontribs/jira) library for API communication and is intentionally kept small and extensible.
+A minimal Python CLI for interacting with Jira Cloud using API tokens. Single-file application (`tiny-jira-cli.py`) using the `jira` (pycontribs/jira) library for API communication. Intentionally kept small and extensible.
 
 ## Dependencies
 
-Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-Dependencies: `jira`, `pyyaml`
+Dependencies: `jira` (pycontribs/jira), `pyyaml`, `rich`
 
 ## Configuration
 
-The CLI requires three configuration values, which can be provided via `.config.yml` (note the leading dot) or environment variables:
+The CLI requires three values: Jira endpoint, user email, and API token. An optional `project` field sets the default project.
 
-**Preferred: .config.yml format:**
+**Config search order:**
+1. `.config.yml` in the working directory
+2. `~/.tiny_jira/config.yml`
+3. Environment variables (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_DEFAULT_PROJECT`)
+
+**Two config formats are supported:**
+
+Legacy flat format:
 ```yaml
 endpoint: "https://your-domain.atlassian.net"
 user: "you@example.com"
-token: "your_api_token"
+token: "your_api_token"    # supports file: prefix, e.g. "file:/path/to/token"
+project: "INFRA"           # optional default project
 ```
 
-The `token` field supports a `file:` prefix to read the token from a file:
+Multi-project format (named profiles under `projects:` key):
 ```yaml
-token: "file:/path/to/token/file"
+projects:
+  infra:
+    endpoint: "https://domain1.atlassian.net"
+    user: "user@example.com"
+    token: "file:/path/to/token"
+    project: "INFRA"
+  other:
+    endpoint: "https://domain2.atlassian.net"
+    user: "other@example.com"
+    token: "token-string"
+    project: "OTHER"
+default: infra    # optional; falls back to first entry
 ```
 
-**Fallback: Environment variables:**
-```bash
-export JIRA_BASE_URL="https://your-domain.atlassian.net"
-export JIRA_EMAIL="you@example.com"
-export JIRA_API_TOKEN="your_api_token"
-```
-
-Configuration loading order:
-1. Read from `.config.yml` if present (note: file starts with a dot)
-2. Fall back to environment variables
-3. Exit with error if any required values are missing
-
-**Configuration debugging:**
-```bash
-python tiny-jira-cli.py --dump  # Show current configuration
-```
+Select a profile at runtime with `-p PROFILE_NAME`. Debug config with `--dump`.
 
 ## Running the CLI
 
-The CLI has three main commands:
-
-**View a single issue:**
 ```bash
-python tiny-jira-cli.py issue ABC-123
-python tiny-jira-cli.py issue ABC-123 --no-description
+python tiny-jira-cli.py issue ABC-123                     # View single issue
+python tiny-jira-cli.py issue ABC-123 --show-comments     # Include comments
+python tiny-jira-cli.py issue                             # List your issues
+python tiny-jira-cli.py issue -p INFRA -n 5               # Filter by project, limit results
+python tiny-jira-cli.py issue --filter "status:Done"      # Filter results locally
+python tiny-jira-cli.py issue -c key,summary,status       # Select columns
+python tiny-jira-cli.py search "status = 'In Progress'"   # JQL search
+python tiny-jira-cli.py comments ABC-123                  # View comments
+python tiny-jira-cli.py --ascii issue                     # Disable color for piping
 ```
 
-**List issues:**
-```bash
-python tiny-jira-cli.py issue                    # List your issues
-python tiny-jira-cli.py issue -p INFRA           # List issues from INFRA project
-python tiny-jira-cli.py issue -p INFRA -n 5      # Limit to 5 results
-python tiny-jira-cli.py issue --describe         # Include descriptions
-```
-
-**Search issues with JQL:**
-```bash
-python tiny-jira-cli.py search "project = ABC AND assignee = currentUser()"
-python tiny-jira-cli.py search "status = 'In Progress'" -n 50
-python tiny-jira-cli.py search "project = ABC" --describe --width 120
-```
-
-**View comments on an issue:**
-```bash
-python tiny-jira-cli.py comments ABC-123
-python tiny-jira-cli.py comments ABC-123 --width 120
-```
-
-## Architecture
-
-This is a single-file CLI application (tiny-jira-cli.py) with a simple structure:
-
-- **Configuration Management**: `get_config()` loads credentials and an optional default project from .config.yml or environment variables, with support for `file:` prefix for token files. Returns a JIRA client instance from the `jira` library.
-- **Display Utilities**: `wrap()` and `print_issue()` handle text formatting and issue display. These work with both JIRA Issue objects and dict responses for backward compatibility.
-- **Command Handlers**: Each subcommand has a dedicated `cmd_*()` function:
-  - `cmd_issue()` - Shows single issue OR lists issues (with optional project filter)
-  - `cmd_search()` - Searches using JQL queries
-  - `cmd_comments()` - Displays comments on an issue
-- **API Communication**: Uses the `jira` (pycontribs/jira) library which provides a high-level interface to Jira Cloud REST API v3. The library handles authentication, request formatting, and response parsing.
-
-Key implementation details:
-- The `jira` library wraps API v3 endpoints and provides object-oriented access to issue fields (e.g., `issue.fields.summary`, `issue.fields.assignee.displayName`)
-- `print_issue()` includes compatibility code to handle both JIRA Issue objects and raw dict responses
-- Configuration file is `.config.yml` (starts with a dot) to avoid accidental commits
-- Token can be loaded from a separate file using `file:/path/to/token` syntax
+A `tiny-jira` wrapper script activates the venv and forwards arguments to `tiny-jira-cli.py`.
 
 ## Testing
 
-There is a test script that validates library compatibility:
 ```bash
 python tests/test_jira_libs.py
 ```
 
-This script tests both `jira` (pycontribs/jira) and `atlassian-python-api` libraries. As of the latest tests, only `jira` (pycontribs/jira) is fully compatible with the current Jira Cloud instance.
+Validates library compatibility with the Jira Cloud instance. Only `jira` (pycontribs/jira) is currently compatible.
+
+## Architecture
+
+Single-file CLI (`tiny-jira-cli.py`, ~1000 lines) with these layers:
+
+- **Configuration** (`get_config()`, `_load_config_file()`, `_resolve_token()`): Detects config format (legacy vs multi-project), resolves `file:` token prefixes, falls back through search order. Case-insensitive profile lookup for multi-project mode.
+- **Command handlers** (`cmd_issue()`, `cmd_search()`, `cmd_comments()`): Each subcommand is a dedicated function dispatched from `main()` via argparse subparsers.
+- **Display** (`print_issue()`, `render_comments()`, `print_block()`): Uses Rich library for tables, panels, and color. `--ascii` mode disables styling for piped output.
+- **Column registry** (`get_column_registry()`): Centralized metadata for table columns (key, summary, status, labels, assignee, created, updated). Each entry defines a label, style, width constraints, and a lambda for field extraction. `calculate_column_widths()` dynamically allocates terminal width.
+- **Filtering** (`parse_filters()`, `filter_issues()`): Local post-query filtering with `--filter "field:value,field:value"` syntax. Case-insensitive substring matching.
+
+Key patterns:
+- `print_issue()` handles both JIRA Issue objects and raw dicts for backward compatibility (`hasattr(issue, 'key')` checks)
+- The `jira` library provides object-oriented field access: `issue.fields.summary`, `issue.fields.assignee.displayName`
+- `.config.yml` starts with a dot to avoid accidental commits (in `.gitignore`)
