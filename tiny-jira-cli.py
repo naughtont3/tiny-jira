@@ -26,48 +26,115 @@ def print_block(content, **panel_kwargs):
         console.print(Panel(content, **panel_kwargs))
 
 
-def get_config():
-    """Load config and return a JIRA client instance plus resolved defaults."""
-    # Try to read from .config.yml first, then ~/.tiny_jira/config.yml
+def _resolve_token(token_value):
+    """Resolve a token value, handling file: prefix."""
+    if token_value and token_value.startswith("file:"):
+        token_path = token_value[5:]
+        try:
+            with open(token_path, "r") as tf:
+                return tf.read().strip()
+        except FileNotFoundError:
+            console.print(f"[red]Error: Token file not found: {token_path}[/red]", file=sys.stderr)
+            sys.exit(1)
+    return token_value
+
+
+def _load_config_file():
+    """Find and load the first available config file. Returns (config_dict, path) or (None, None)."""
     config_paths = [
         ".config.yml",
         os.path.join(os.path.expanduser("~"), ".tiny_jira", "config.yml"),
     ]
+    for config_file in config_paths:
+        if not os.path.exists(config_file):
+            continue
+        with open(config_file, "r") as f:
+            config = yaml.safe_load(f)
+        if config:
+            return config, config_file
+    return None, None
+
+
+def get_config(project_label=None):
+    """Load config and return a JIRA client instance plus resolved defaults.
+
+    Supports two config formats:
+    - Legacy flat format: endpoint/user/token/project at top level
+    - Multi-project format: 'projects' key containing named profiles
+
+    Args:
+        project_label: In multi-project mode, selects the profile (case-insensitive).
+                       In legacy mode, overrides default_project for JQL filtering.
+    """
+    config, config_file = _load_config_file()
+
     base_url = None
     email = None
     api_token = None
     default_project = None
 
-    for config_file in config_paths:
-        if not os.path.exists(config_file):
-            continue
+    if config and isinstance(config.get("projects"), dict):
+        # --- Multi-project mode ---
+        projects = config["projects"]
+        if not projects:
+            console.print("[red]Error: 'projects' is defined but empty in config.[/red]", file=sys.stderr)
+            sys.exit(1)
 
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
+        if project_label:
+            # Case-insensitive lookup
+            label_lower = project_label.lower()
+            matched_key = None
+            for key in projects:
+                if key.lower() == label_lower:
+                    matched_key = key
+                    break
+            if matched_key is None:
+                available = ", ".join(projects.keys())
+                console.print(
+                    f"[red]Error: Unknown project '{project_label}'. "
+                    f"Available: {available}[/red]", file=sys.stderr
+                )
+                sys.exit(1)
+            profile = projects[matched_key]
+        else:
+            # Use 'default' key or first entry
+            default_key = config.get("default")
+            if default_key:
+                # Case-insensitive lookup for default key too
+                default_lower = default_key.lower()
+                matched_key = None
+                for key in projects:
+                    if key.lower() == default_lower:
+                        matched_key = key
+                        break
+                if matched_key is None:
+                    available = ", ".join(projects.keys())
+                    console.print(
+                        f"[red]Error: Default project '{default_key}' not found. "
+                        f"Available: {available}[/red]", file=sys.stderr
+                    )
+                    sys.exit(1)
+                profile = projects[matched_key]
+            else:
+                # First entry
+                first_key = next(iter(projects))
+                profile = projects[first_key]
 
+        base_url = profile.get("endpoint")
+        email = profile.get("user")
+        api_token = _resolve_token(profile.get("token"))
+        default_project = profile.get("project")
+
+    elif config:
+        # --- Legacy flat format ---
         base_url = config.get("endpoint")
         email = config.get("user")
-        token_value = config.get("token")
-        project_value = config.get("project")
+        api_token = _resolve_token(config.get("token"))
+        default_project = config.get("project")
 
-        if project_value:
-            default_project = project_value
-
-        # Handle file: prefix for token
-        if token_value and token_value.startswith("file:"):
-            token_path = token_value[5:]  # Remove "file:" prefix
-            try:
-                with open(token_path, "r") as tf:
-                    api_token = tf.read().strip()
-            except FileNotFoundError:
-                console.print(f"[red]Error: Token file not found: {token_path}[/red]", file=sys.stderr)
-                sys.exit(1)
-        else:
-            api_token = token_value
-
-        # Stop after first config file found in priority order
-        if base_url or email or api_token:
-            break
+        # In legacy mode, -p overrides default_project for JQL filtering
+        if project_label:
+            default_project = project_label
 
     # Fall back to environment variables if not set from config
     if not base_url:
@@ -614,13 +681,13 @@ def print_issue(issue, show_description=True, width=100, format="detailed"):
 
 def cmd_issue(args):
     """Display a single issue or list all issues."""
-    jira, _, _, _, default_project = get_config()
+    jira, _, _, _, default_project = get_config(project_label=args.project)
 
     # If no key provided, list all issues
     if not args.key:
         try:
             # Build JQL query based on project filter
-            project = args.project or default_project
+            project = default_project
             if project:
                 jql = f"project = {project} ORDER BY updated DESC"
             else:
@@ -682,7 +749,7 @@ def cmd_issue(args):
 
 def cmd_search(args):
     """Search for issues using JQL."""
-    jira, _, _, _, _ = get_config()
+    jira, _, _, _, _ = get_config(project_label=args.project)
 
     try:
         issues = jira.search_issues(args.jql, maxResults=args.max_results)
@@ -714,7 +781,7 @@ def cmd_search(args):
 
 def cmd_comments(args):
     """Display comments for an issue."""
-    jira, _, _, _, _ = get_config()
+    jira, _, _, _, _ = get_config(project_label=args.project)
 
     try:
         issue = jira.issue(args.key)
@@ -750,6 +817,11 @@ def main():
         action="store_true",
         help="Show usage examples and exit",
     )
+    parser.add_argument(
+        "-p", "--project",
+        type=str,
+        help="Project label (selects profile in multi-project config, or filters by project in legacy config)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=False)
 
     # jira_cli.py issue [KEY]
@@ -768,11 +840,6 @@ def main():
         "--show-comments",
         action="store_true",
         help="Include comments when showing a specific issue",
-    )
-    p_issue.add_argument(
-        "-p", "--project",
-        type=str,
-        help="Filter by project when listing issues (e.g., INFRA, ABC)",
     )
     p_issue.add_argument(
         "-n", "--max-results",
@@ -872,20 +939,57 @@ def main():
         sys.exit(0)
 
     if args.dump:
-        _, base_url, email, api_token, default_project = get_config()
-        config_lines = [
-            f"[bold cyan]Endpoint:[/bold cyan] {base_url}",
-            f"[bold cyan]User:[/bold cyan]     {email}",
-            f"[bold cyan]Token:[/bold cyan]    {'*' * 8 if api_token else '[dim](not set)[/dim]'}",
-        ]
-        if default_project:
-            config_lines.append(f"[bold cyan]Project:[/bold cyan]  {default_project}")
-        print_block(
-            "\n".join(config_lines),
-            title="[bold yellow]Jira Configuration[/bold yellow]",
-            border_style="green",
-            padding=(1, 2)
-        )
+        config, _ = _load_config_file()
+        if config and isinstance(config.get("projects"), dict):
+            # Multi-project mode: show all profiles
+            projects = config["projects"]
+            default_key = config.get("default")
+            selected = args.project
+
+            # Determine which profile is active
+            if selected:
+                sel_lower = selected.lower()
+            elif default_key:
+                sel_lower = default_key.lower()
+            else:
+                sel_lower = next(iter(projects)).lower() if projects else None
+
+            config_lines = []
+            for label, profile in projects.items():
+                is_active = (label.lower() == sel_lower) if sel_lower else False
+                marker = " [bold green](active)[/bold green]" if is_active else ""
+                is_default = (default_key and label.lower() == default_key.lower())
+                default_marker = " [dim](default)[/dim]" if is_default else ""
+                config_lines.append(f"[bold yellow]{label}[/bold yellow]{default_marker}{marker}")
+                config_lines.append(f"  [bold cyan]Endpoint:[/bold cyan] {profile.get('endpoint', '')}")
+                config_lines.append(f"  [bold cyan]User:[/bold cyan]     {profile.get('user', '')}")
+                token_val = profile.get("token", "")
+                config_lines.append(f"  [bold cyan]Token:[/bold cyan]    {'*' * 8 if token_val else '[dim](not set)[/dim]'}")
+                if profile.get("project"):
+                    config_lines.append(f"  [bold cyan]Project:[/bold cyan]  {profile['project']}")
+                config_lines.append("")
+            print_block(
+                "\n".join(config_lines).rstrip(),
+                title="[bold yellow]Jira Configuration (multi-project)[/bold yellow]",
+                border_style="green",
+                padding=(1, 2)
+            )
+        else:
+            # Legacy mode
+            _, base_url, email, api_token, default_project = get_config(project_label=args.project)
+            config_lines = [
+                f"[bold cyan]Endpoint:[/bold cyan] {base_url}",
+                f"[bold cyan]User:[/bold cyan]     {email}",
+                f"[bold cyan]Token:[/bold cyan]    {'*' * 8 if api_token else '[dim](not set)[/dim]'}",
+            ]
+            if default_project:
+                config_lines.append(f"[bold cyan]Project:[/bold cyan]  {default_project}")
+            print_block(
+                "\n".join(config_lines),
+                title="[bold yellow]Jira Configuration[/bold yellow]",
+                border_style="green",
+                padding=(1, 2)
+            )
         sys.exit(0)
 
     if not args.command:
