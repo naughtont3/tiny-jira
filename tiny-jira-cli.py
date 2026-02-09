@@ -14,6 +14,7 @@ from rich.text import Text
 from rich import box
 
 console = Console()
+err_console = Console(stderr=True)
 TABLE_BOX = box.ROUNDED
 ASCII_MODE = False
 
@@ -34,7 +35,7 @@ def _resolve_token(token_value):
             with open(token_path, "r") as tf:
                 return tf.read().strip()
         except FileNotFoundError:
-            console.print(f"[red]Error: Token file not found: {token_path}[/red]", file=sys.stderr)
+            err_console.print(f"[red]Error: Token file not found: {token_path}[/red]")
             sys.exit(1)
     return token_value
 
@@ -77,7 +78,7 @@ def get_config(project_label=None):
         # --- Multi-project mode ---
         projects = config["projects"]
         if not projects:
-            console.print("[red]Error: 'projects' is defined but empty in config.[/red]", file=sys.stderr)
+            err_console.print("[red]Error: 'projects' is defined but empty in config.[/red]")
             sys.exit(1)
 
         if project_label:
@@ -90,9 +91,9 @@ def get_config(project_label=None):
                     break
             if matched_key is None:
                 available = ", ".join(projects.keys())
-                console.print(
+                err_console.print(
                     f"[red]Error: Unknown project '{project_label}'. "
-                    f"Available: {available}[/red]", file=sys.stderr
+                    f"Available: {available}[/red]"
                 )
                 sys.exit(1)
             profile = projects[matched_key]
@@ -109,9 +110,9 @@ def get_config(project_label=None):
                         break
                 if matched_key is None:
                     available = ", ".join(projects.keys())
-                    console.print(
+                    err_console.print(
                         f"[red]Error: Default project '{default_key}' not found. "
-                        f"Available: {available}[/red]", file=sys.stderr
+                        f"Available: {available}[/red]"
                     )
                     sys.exit(1)
                 profile = projects[matched_key]
@@ -153,16 +154,16 @@ def get_config(project_label=None):
     ] if not val]
 
     if missing:
-        console.print(f"[red]Error: missing configuration: {', '.join(missing)}[/red]", file=sys.stderr)
-        console.print("[yellow]Please provide them via .config.yml, ~/.tiny_jira/config.yml, or environment variables:[/yellow]", file=sys.stderr)
-        console.print('  [cyan].config.yml / ~/.tiny_jira/config.yml format:[/cyan]', file=sys.stderr)
-        console.print('    endpoint: "https://your-domain.atlassian.net"', file=sys.stderr)
-        console.print('    user: "you@example.com"', file=sys.stderr)
-        console.print('    token: "your_api_token"', file=sys.stderr)
-        console.print('  [cyan]OR set environment variables:[/cyan]', file=sys.stderr)
-        console.print('    export JIRA_BASE_URL="https://your-domain.atlassian.net"', file=sys.stderr)
-        console.print('    export JIRA_EMAIL="you@example.com"', file=sys.stderr)
-        console.print('    export JIRA_API_TOKEN="your_api_token"', file=sys.stderr)
+        err_console.print(f"[red]Error: missing configuration: {', '.join(missing)}[/red]")
+        err_console.print("[yellow]Please provide them via .config.yml, ~/.tiny_jira/config.yml, or environment variables:[/yellow]")
+        err_console.print('  [cyan].config.yml / ~/.tiny_jira/config.yml format:[/cyan]')
+        err_console.print('    endpoint: "https://your-domain.atlassian.net"')
+        err_console.print('    user: "you@example.com"')
+        err_console.print('    token: "your_api_token"')
+        err_console.print('  [cyan]OR set environment variables:[/cyan]')
+        err_console.print('    export JIRA_BASE_URL="https://your-domain.atlassian.net"')
+        err_console.print('    export JIRA_EMAIL="you@example.com"')
+        err_console.print('    export JIRA_API_TOKEN="your_api_token"')
         sys.exit(1)
 
     # Return JIRA client instance
@@ -170,7 +171,7 @@ def get_config(project_label=None):
         jira = JIRA(server=base_url.rstrip("/"), basic_auth=(email, api_token))
         return jira, base_url, email, api_token, default_project
     except JIRAError as e:
-        console.print(f"[red]Error connecting to Jira: {e}[/red]", file=sys.stderr)
+        err_console.print(f"[red]Error connecting to Jira: {e}[/red]")
         sys.exit(1)
 
 
@@ -709,7 +710,7 @@ def cmd_issue(args):
             try:
                 columns = parse_columns_arg(getattr(args, 'columns', None))
             except ValueError as e:
-                console.print(f"[red]Error: {e}[/red]", file=sys.stderr)
+                err_console.print(f"[red]Error: {e}[/red]")
                 sys.exit(1)
 
             # Use table format when listing multiple issues without descriptions
@@ -724,7 +725,7 @@ def cmd_issue(args):
                     add_issue_to_table(table, issue, col_list)
                 console.print(table)
         except JIRAError as e:
-            console.print(f"[red]Error fetching issues: {e}[/red]", file=sys.stderr)
+            err_console.print(f"[red]Error fetching issues: {e}[/red]")
             sys.exit(1)
     else:
         # Show single issue (always use detailed format)
@@ -737,13 +738,13 @@ def cmd_issue(args):
                     comments = jira.comments(issue)
                     render_comments(args.key, comments, args.width)
                 except JIRAError as e:
-                    console.print(f"[red]Error fetching comments for {args.key}: {e}[/red]", file=sys.stderr)
+                    err_console.print(f"[red]Error fetching comments for {args.key}: {e}[/red]")
                     sys.exit(1)
         except JIRAError as e:
             if e.status_code == 404:
-                console.print(f"[red]Issue {args.key} not found.[/red]", file=sys.stderr)
+                err_console.print(f"[red]Issue {args.key} not found.[/red]")
             else:
-                console.print(f"[red]Error fetching issue: {e}[/red]", file=sys.stderr)
+                err_console.print(f"[red]Error fetching issue: {e}[/red]")
             sys.exit(1)
 
 
@@ -762,7 +763,7 @@ def cmd_search(args):
         try:
             columns = parse_columns_arg(getattr(args, 'columns', None))
         except ValueError as e:
-            console.print(f"[red]Error: {e}[/red]", file=sys.stderr)
+            err_console.print(f"[red]Error: {e}[/red]")
             sys.exit(1)
 
         # Use table format when not showing descriptions
@@ -775,7 +776,7 @@ def cmd_search(args):
                 add_issue_to_table(table, issue, col_list)
             console.print(table)
     except JIRAError as e:
-        console.print(f"[red]Error searching issues: {e}[/red]", file=sys.stderr)
+        err_console.print(f"[red]Error searching issues: {e}[/red]")
         sys.exit(1)
 
 
@@ -791,9 +792,9 @@ def cmd_comments(args):
 
     except JIRAError as e:
         if e.status_code == 404:
-            console.print(f"[red]Issue {args.key} not found.[/red]", file=sys.stderr)
+            err_console.print(f"[red]Issue {args.key} not found.[/red]")
         else:
-            console.print(f"[red]Error fetching comments: {e}[/red]", file=sys.stderr)
+            err_console.print(f"[red]Error fetching comments: {e}[/red]")
         sys.exit(1)
 
 
@@ -924,13 +925,15 @@ def main():
     args = parser.parse_args()
 
     # Configure console based on ASCII preference
-    global console, TABLE_BOX, ASCII_MODE
+    global console, err_console, TABLE_BOX, ASCII_MODE
     if args.ascii:
         console = Console(color_system=None, force_terminal=False, no_color=True, highlight=False)
+        err_console = Console(stderr=True, color_system=None, force_terminal=False, no_color=True, highlight=False)
         TABLE_BOX = box.ASCII
         ASCII_MODE = True
     else:
         console = Console()
+        err_console = Console(stderr=True)
         TABLE_BOX = box.ROUNDED
         ASCII_MODE = False
 
