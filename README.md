@@ -21,12 +21,12 @@ tiny-jira --help
 
 ## Configuration
 
-The CLI needs three values: Jira base URL, user email, and an API token.
+The CLI needs a Jira endpoint and a token. For Jira Cloud (default), a user email is also required. For Jira Server with a Personal Access Token (PAT), set `auth: pat` and `user` is not needed.
 
 **Config search order:**
 1. `.config.yml` in the working directory
 2. `~/.tiny_jira/config.yml`
-3. Environment variables (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`)
+3. Environment variables (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_AUTH_METHOD`)
 
 ### Single-project config
 
@@ -35,29 +35,30 @@ endpoint: "https://your-domain.atlassian.net"
 user: "you@example.com"
 token: "file:/path/to/token"  # or the token string directly
 project: "INFRA"              # optional default project
+auth: "pat"                   # optional; use "pat" for Jira Server PAT (Bearer token)
 ```
 
 ### Multi-project config
 
 ```yaml
 projects:
-  infra:
+  cloud-project:
     endpoint: "https://domain1.atlassian.net"
     user: "user@example.com"
     token: "file:/path/to/token"
     project: "INFRA"
-  other:
-    endpoint: "https://domain2.atlassian.net"
-    user: "other@example.com"
-    token: "token-string"
-    project: "OTHER"
-default: infra    # optional; falls back to first entry
+  server-project:
+    endpoint: "https://jira.example.org"
+    token: "file:/path/to/pat"
+    project: "DS"
+    auth: pat                  # uses Bearer token, no user needed
+default: cloud-project         # optional; falls back to first entry
 ```
 
 Select a profile at runtime with `-p PROFILE_NAME`.
 
 - The `token` key accepts a `file:/path/to/token` prefix to read the token from a file.
-- Environment variable fallback: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, and optional `JIRA_DEFAULT_PROJECT`.
+- Environment variable fallback: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_DEFAULT_PROJECT`, and `JIRA_AUTH_METHOD`.
 - Debug what the CLI sees with `--dump`.
 - See `misc/_config.yml` for a full example.
 
