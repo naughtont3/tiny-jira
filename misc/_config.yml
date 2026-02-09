@@ -2,6 +2,7 @@ endpoint: "https://my.atlassian.net"
 user: "myusername@hello.com"
 token: "file:/Users/sgrundy/tokens/bogus-testing"
 project: "Hello"
+# auth: pat   # uncomment for Jira Server PAT (Bearer token); user not needed
 
 # --- Multi-project format ---
 # Uncomment below (and remove the flat config above) to use multiple profiles.
@@ -18,5 +19,10 @@ project: "Hello"
 #     user: "other@example.com"
 #     token: "token-string"
 #     project: "ABC"
+#   jira-server:
+#     endpoint: "https://jira.example.org"
+#     token: "file:/path/to/pat"
+#     project: "DS"
+#     auth: pat    # Bearer token auth; no user needed
 #
 # default: infra   # optional; falls back to first entry
