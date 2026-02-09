@@ -73,6 +73,7 @@ def get_config(project_label=None):
     email = None
     api_token = None
     default_project = None
+    auth_method = None  # None means basic_auth; "pat" means token_auth (Bearer)
 
     if config and isinstance(config.get("projects"), dict):
         # --- Multi-project mode ---
@@ -125,6 +126,7 @@ def get_config(project_label=None):
         email = profile.get("user")
         api_token = _resolve_token(profile.get("token"))
         default_project = profile.get("project")
+        auth_method = profile.get("auth")
 
     elif config:
         # --- Legacy flat format ---
@@ -132,6 +134,7 @@ def get_config(project_label=None):
         email = config.get("user")
         api_token = _resolve_token(config.get("token"))
         default_project = config.get("project")
+        auth_method = config.get("auth")
 
         # In legacy mode, -p overrides default_project for JQL filtering
         if project_label:
@@ -146,29 +149,41 @@ def get_config(project_label=None):
         api_token = os.environ.get("JIRA_API_TOKEN")
     if not default_project:
         default_project = os.environ.get("JIRA_DEFAULT_PROJECT")
+    if not auth_method:
+        auth_method = os.environ.get("JIRA_AUTH_METHOD")
 
-    missing = [name for name, val in [
+    use_pat = auth_method and auth_method.lower() == "pat"
+
+    # user/email is not required for PAT auth
+    required = [
         ("JIRA_BASE_URL/endpoint", base_url),
-        ("JIRA_EMAIL/user", email),
         ("JIRA_API_TOKEN/token", api_token),
-    ] if not val]
+    ]
+    if not use_pat:
+        required.insert(1, ("JIRA_EMAIL/user", email))
+    missing = [name for name, val in required if not val]
 
     if missing:
         err_console.print(f"[red]Error: missing configuration: {', '.join(missing)}[/red]")
         err_console.print("[yellow]Please provide them via .config.yml, ~/.tiny_jira/config.yml, or environment variables:[/yellow]")
         err_console.print('  [cyan].config.yml / ~/.tiny_jira/config.yml format:[/cyan]')
         err_console.print('    endpoint: "https://your-domain.atlassian.net"')
-        err_console.print('    user: "you@example.com"')
+        if not use_pat:
+            err_console.print('    user: "you@example.com"')
         err_console.print('    token: "your_api_token"')
-        err_console.print('  [cyan]OR set environment variables:[/cyan]')
-        err_console.print('    export JIRA_BASE_URL="https://your-domain.atlassian.net"')
-        err_console.print('    export JIRA_EMAIL="you@example.com"')
-        err_console.print('    export JIRA_API_TOKEN="your_api_token"')
+        if not use_pat:
+            err_console.print('  [cyan]OR set environment variables:[/cyan]')
+            err_console.print('    export JIRA_BASE_URL="https://your-domain.atlassian.net"')
+            err_console.print('    export JIRA_EMAIL="you@example.com"')
+            err_console.print('    export JIRA_API_TOKEN="your_api_token"')
         sys.exit(1)
 
     # Return JIRA client instance
     try:
-        jira = JIRA(server=base_url.rstrip("/"), basic_auth=(email, api_token))
+        if use_pat:
+            jira = JIRA(server=base_url.rstrip("/"), token_auth=api_token)
+        else:
+            jira = JIRA(server=base_url.rstrip("/"), basic_auth=(email, api_token))
         return jira, base_url, email, api_token, default_project
     except JIRAError as e:
         err_console.print(f"[red]Error connecting to Jira: {e}[/red]")
@@ -965,7 +980,11 @@ def main():
                 default_marker = " [dim](default)[/dim]" if is_default else ""
                 config_lines.append(f"[bold yellow]{label}[/bold yellow]{default_marker}{marker}")
                 config_lines.append(f"  [bold cyan]Endpoint:[/bold cyan] {profile.get('endpoint', '')}")
-                config_lines.append(f"  [bold cyan]User:[/bold cyan]     {profile.get('user', '')}")
+                auth = profile.get("auth", "")
+                if auth and auth.lower() == "pat":
+                    config_lines.append(f"  [bold cyan]Auth:[/bold cyan]     PAT (Bearer token)")
+                else:
+                    config_lines.append(f"  [bold cyan]User:[/bold cyan]     {profile.get('user', '')}")
                 token_val = profile.get("token", "")
                 config_lines.append(f"  [bold cyan]Token:[/bold cyan]    {'*' * 8 if token_val else '[dim](not set)[/dim]'}")
                 if profile.get("project"):
