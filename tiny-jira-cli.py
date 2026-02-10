@@ -705,7 +705,7 @@ def cmd_issue(args):
             # Build JQL query based on project filter
             project = default_project
             if project:
-                jql = f"project = {project} ORDER BY updated DESC"
+                jql = f'project = "{project}" ORDER BY updated DESC'
             else:
                 # Default: issues assigned to or reported by current user
                 jql = "assignee = currentUser() OR reporter = currentUser() ORDER BY updated DESC"
