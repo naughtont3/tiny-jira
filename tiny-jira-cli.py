@@ -780,10 +780,16 @@ def cmd_issue(args):
     # If no key provided, list all issues
     if not args.key:
         try:
-            # Build JQL query based on project filter
+            # Build JQL query based on project and sprint filters
             project = default_project
+            sprint = getattr(args, 'sprint', None)
+            clauses = []
             if project:
-                jql = f'project = "{project}" ORDER BY updated DESC'
+                clauses.append(f'project = "{project}"')
+            if sprint:
+                clauses.append(f'sprint = "{sprint}"')
+            if clauses:
+                jql = " AND ".join(clauses) + " ORDER BY updated DESC"
             else:
                 # Default: issues assigned to or reported by current user
                 jql = "assignee = currentUser() OR reporter = currentUser() ORDER BY updated DESC"
@@ -964,6 +970,11 @@ def main():
         help="Comma-separated columns to display in table view. "
              "Available: key, summary, status, labels, assignee, created, updated. "
              "Default: key,summary,status,labels,assignee,created,updated"
+    )
+    p_issue.add_argument(
+        "--sprint",
+        type=str,
+        help='Filter by sprint name, e.g. --sprint "API Sprint 1"',
     )
     p_issue.set_defaults(func=cmd_issue)
 
