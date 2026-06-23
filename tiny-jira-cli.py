@@ -239,6 +239,12 @@ def show_examples(prog_name):
           # List your issues (assigned to or reported by you)
           {prog_name} issue
 
+          # List all issues in a sprint
+          {prog_name} issue --sprint "API Sprint 1"
+
+          # List issues in a sprint scoped to a project
+          {prog_name} issue -p API --sprint "API Sprint 1"
+
         Search command:
           # Search for issues assigned to you
           {prog_name} search "assignee = currentUser()"
