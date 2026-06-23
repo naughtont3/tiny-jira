@@ -624,6 +624,18 @@ def render_comments(issue_key, comments, width):
             console.print()
 
 
+def _sprint_name(sprint):
+    """Extract a human-readable sprint name from various formats the jira library returns."""
+    if isinstance(sprint, str):
+        m = re.search(r'\bname=([^,\]]+)', sprint)
+        return m.group(1) if m else sprint
+    if hasattr(sprint, 'name'):
+        return sprint.name
+    if isinstance(sprint, dict):
+        return sprint.get('name', str(sprint))
+    return str(sprint)
+
+
 def print_issue(issue, show_description=True, width=100, format="detailed"):
     """Print issue details. Works with both JIRA Issue objects and dicts.
 
@@ -646,6 +658,9 @@ def print_issue(issue, show_description=True, width=100, format="detailed"):
         labels = issue.fields.labels if issue.fields.labels else []
         created = issue.fields.created[:10] if issue.fields.created else ""
         updated = issue.fields.updated[:10] if issue.fields.updated else ""
+        sprints = getattr(issue.fields, 'customfield_10020', None) or []
+        subtasks = getattr(issue.fields, 'subtasks', None) or []
+        issuelinks = getattr(issue.fields, 'issuelinks', None) or []
     else:
         # Dict format (for backward compatibility)
         key = issue.get("key")
@@ -659,6 +674,9 @@ def print_issue(issue, show_description=True, width=100, format="detailed"):
         labels = fields.get("labels", [])
         created = (fields.get("created") or "")[:10]
         updated = (fields.get("updated") or "")[:10]
+        sprints = fields.get("customfield_10020") or []
+        subtasks = fields.get("subtasks") or []
+        issuelinks = fields.get("issuelinks") or []
 
     # Build the content for the panel
     content = []
@@ -671,8 +689,68 @@ def print_issue(issue, show_description=True, width=100, format="detailed"):
         labels_str = ", ".join(f"[magenta]{label}[/magenta]" for label in labels)
         content.append(f"[bold]Labels:[/bold]     {labels_str}")
 
+    if sprints:
+        sprint_names = [_sprint_name(s) for s in sprints if s]
+        if sprint_names:
+            content.append(f"[bold]Sprint:[/bold]     {', '.join(sprint_names)}")
+
     content.append(f"[bold]Created:[/bold]    [dim]{created}[/dim]")
     content.append(f"[bold]Updated:[/bold]    [dim]{updated}[/dim]")
+
+    if subtasks:
+        content.append("")
+        content.append("[bold]Subtasks:[/bold]")
+        for st in subtasks:
+            if hasattr(st, 'key'):
+                st_key = st.key
+                st_summary = st.fields.summary if hasattr(st.fields, 'summary') else ""
+                st_status = st.fields.status.name if hasattr(st.fields, 'status') and st.fields.status else ""
+            else:
+                st_key = st.get("key", "")
+                st_fields = st.get("fields", {})
+                st_summary = st_fields.get("summary", "")
+                st_status = (st_fields.get("status") or {}).get("name", "")
+            status_tag = f" [dim][{st_status}][/dim]" if st_status else ""
+            content.append(f"  [bold yellow]{st_key}[/bold yellow]{status_tag}  {st_summary}")
+
+    if issuelinks:
+        content.append("")
+        content.append("[bold]Linked Issues:[/bold]")
+        for link in issuelinks:
+            if hasattr(link, 'type'):
+                link_type = link.type
+                outward_issue = getattr(link, 'outwardIssue', None)
+                inward_issue = getattr(link, 'inwardIssue', None)
+                if outward_issue:
+                    rel = link_type.outward if hasattr(link_type, 'outward') else str(link_type)
+                    li_key = outward_issue.key
+                    li_summary = outward_issue.fields.summary if hasattr(outward_issue.fields, 'summary') else ""
+                    li_status = outward_issue.fields.status.name if outward_issue.fields.status else ""
+                elif inward_issue:
+                    rel = link_type.inward if hasattr(link_type, 'inward') else str(link_type)
+                    li_key = inward_issue.key
+                    li_summary = inward_issue.fields.summary if hasattr(inward_issue.fields, 'summary') else ""
+                    li_status = inward_issue.fields.status.name if inward_issue.fields.status else ""
+                else:
+                    continue
+            else:
+                link_type_obj = link.get("type", {})
+                outward_issue = link.get("outwardIssue")
+                inward_issue = link.get("inwardIssue")
+                if outward_issue:
+                    rel = link_type_obj.get("outward", "")
+                    li_key = outward_issue.get("key", "")
+                    li_summary = outward_issue.get("fields", {}).get("summary", "")
+                    li_status = (outward_issue.get("fields", {}).get("status") or {}).get("name", "")
+                elif inward_issue:
+                    rel = link_type_obj.get("inward", "")
+                    li_key = inward_issue.get("key", "")
+                    li_summary = inward_issue.get("fields", {}).get("summary", "")
+                    li_status = (inward_issue.get("fields", {}).get("status") or {}).get("name", "")
+                else:
+                    continue
+            status_tag = f" [dim][{li_status}][/dim]" if li_status else ""
+            content.append(f"  [dim]{rel}[/dim] [bold yellow]{li_key}[/bold yellow]{status_tag}  {li_summary}")
 
     if show_description:
         content.append("")
